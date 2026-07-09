@@ -20,6 +20,11 @@ def in_tmp(tmp_path, monkeypatch):
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     """A real, initialized git repo with committer identity, chdir'd into."""
+    # Isolate from the user's global git config (e.g. commit.gpgSign).
+    empty_cfg = tmp_path / "gitconfig"
+    empty_cfg.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_cfg))
+
     run_git("init", "-b", "main", cwd=tmp_path)
     run_git("config", "user.email", "dev@example.com", cwd=tmp_path)
     run_git("config", "user.name", "Dev", cwd=tmp_path)
