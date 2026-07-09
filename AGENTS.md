@@ -34,8 +34,9 @@ or git side effects back into the pure logic.
 | Module                       | Responsibility                                          |
 | ---------------------------- | ------------------------------------------------------- |
 | `my_workshop/yaml_config.py` | Pure line-editing of the workshop YAML. No I/O beyond reading/writing the target file; no subprocess. |
+| `my_workshop/additions.py`  | Load/parse the external additions config (`workshop.my.yaml` next to the workshop YAML, or `~/.config/my-workshop/my.yaml`). Pure parsing; file I/O only in `load_additions`. Returns `{}` (noop) when no file is found. |
 | `my_workshop/worktree.py`    | Hide/reveal the YAML from git. Shells out to the real `git` binary; degrades to a no-op when git is absent or the path is outside a repo. |
-| `my_workshop/workshop.py`    | `Workshop` wraps the `workshop` CLI; `provision`/`hostname` orchestrate against any Workshop-shaped object. `parse_hostname` is pure. |
+| `my_workshop/workshop.py`    | `Workshop` wraps the `workshop` CLI; `provision(ws, provision_spec)`/`hostname(ws)` orchestrate against any Workshop-shaped object. `parse_hostname` and `parse_workshop_name` are pure. |
 | `my_workshop/cli.py`         | `argparse` + `main(argv=None, workshop=None)`.          |
 
 ### Seams — preserve them
@@ -47,8 +48,8 @@ when you extend the code:
   `log=print` parameter instead of calling `print` directly — tests pass
   `log=list.append` to capture output without touching stdout.
 - `main(argv=None, workshop=None)` accepts a parsed-args override and an
-  injected workshop backend. `provision(ws, omp_home)` / `hostname(ws)` take the
-  workshop object as an argument rather than constructing the real one.
+  injected workshop backend. `provision(ws, provision_spec)` / `hostname(ws)`
+  take the workshop object as an argument rather than constructing the real one.
 
 If you add a new external dependency (another CLI, network call, etc.), add a
 similar seam and a fake — do not reach for `subprocess` inline in logic that

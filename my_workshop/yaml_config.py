@@ -8,20 +8,6 @@ plugs/slots are spliced in.
 import glob
 import os
 
-DEFAULT_BASE = "ubuntu@24.04"
-
-# Tunnel wiring shared by the try-omp plug and the system slot it connects to.
-GATEWAY = {"interface": "tunnel", "endpoint": "localhost:4000"}
-
-# Each required SDK and the plugs/slots it must provide. An SDK named here that
-# is absent is injected whole; one that already exists (possibly declared for
-# another purpose) has only its missing plugs/slots merged in.
-REQUIRED_SDKS = [
-    {"name": "try-zed-remote"},
-    {"name": "try-omp", "plugs": {"pi-auth-gateway": GATEWAY}},
-    {"name": "system", "slots": {"pi-auth-gateway": GATEWAY}},
-]
-
 
 def iter_sdk_blocks(lines):
     """Yield (name, start, end) for each SDK item under the sdks: block.
@@ -124,8 +110,8 @@ def render_sdk(spec):
     return "".join(out)
 
 
-def render_template(base):
-    body = "".join(render_sdk(spec) for spec in REQUIRED_SDKS)
+def render_template(base, sdks):
+    body = "".join(render_sdk(spec) for spec in sdks)
     return f"name: dev\nbase: {base}\nsdks:\n{body}"
 
 
@@ -194,7 +180,7 @@ def find_yaml(explicit):
     return "workshop.yaml"
 
 
-def ensure_yaml(path, base, log=print):
+def ensure_yaml(path, base, sdks, log=print):
     """Create `path` from the template, or merge in any missing required SDKs.
 
     Prints a short summary of what changed via `log`. A no-op (no print) when
@@ -202,7 +188,7 @@ def ensure_yaml(path, base, log=print):
     """
     if not os.path.exists(path):
         with open(path, "w") as f:
-            f.write(render_template(base))
+            f.write(render_template(base, sdks))
         log(f"Created {path}")
         return
 
@@ -213,7 +199,7 @@ def ensure_yaml(path, base, log=print):
     added = []
     merged = []
 
-    for spec in REQUIRED_SDKS:
+    for spec in sdks:
         name = spec["name"]
         if name not in present:
             insert_at = sdks_end(lines)

@@ -8,9 +8,6 @@ find_yaml, and the create/merge/idempotent behaviour of ensure_yaml.
 """
 
 from my_workshop.yaml_config import (
-    DEFAULT_BASE,
-    GATEWAY,
-    REQUIRED_SDKS,
     add_missing,
     ensure_yaml,
     find_subblock,
@@ -22,6 +19,15 @@ from my_workshop.yaml_config import (
 )
 
 import pytest
+
+# Test fixture values matching the example additions config.
+DEFAULT_BASE = "ubuntu@24.04"
+GATEWAY = {"interface": "tunnel", "endpoint": "localhost:4000"}
+REQUIRED_SDKS = [
+    {"name": "try-zed-remote"},
+    {"name": "try-omp", "plugs": {"pi-auth-gateway": GATEWAY}},
+    {"name": "system", "slots": {"pi-auth-gateway": GATEWAY}},
+]
 
 
 def lines_of(text):
@@ -141,7 +147,7 @@ def test_find_subblock_absent_returns_none_and_empty_set():
 
 
 def test_render_template_round_trips_all_required_sdks():
-    text = render_template(DEFAULT_BASE)
+    text = render_template(DEFAULT_BASE, REQUIRED_SDKS)
     assert text.startswith(f"name: dev\nbase: {DEFAULT_BASE}\nsdks:\n")
     names = [name for name, _, _ in iter_sdk_blocks(lines_of(text))]
     assert names == [spec["name"] for spec in REQUIRED_SDKS]
@@ -255,7 +261,7 @@ def test_find_yaml_falls_back_when_nothing_exists(in_tmp):
 
 def test_ensure_yaml_creates_from_template_and_logs(in_tmp):
     log = []
-    ensure_yaml("workshop.yaml", DEFAULT_BASE, log=log.append)
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=log.append)
 
     assert log == ["Created workshop.yaml"]
     text = (in_tmp / "workshop.yaml").read_text()
@@ -265,11 +271,11 @@ def test_ensure_yaml_creates_from_template_and_logs(in_tmp):
 
 
 def test_ensure_yaml_is_idempotent(in_tmp):
-    ensure_yaml("workshop.yaml", DEFAULT_BASE, log=[].append)
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=[].append)
     before = (in_tmp / "workshop.yaml").read_bytes()
 
     log = []
-    ensure_yaml("workshop.yaml", DEFAULT_BASE, log=log.append)
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=log.append)
     # Second run changes nothing and stays silent.
     assert log == []
     assert (in_tmp / "workshop.yaml").read_bytes() == before
@@ -294,7 +300,7 @@ def test_ensure_yaml_merges_missing_plug_preserving_lines(in_tmp):
     (in_tmp / "hand.yaml").write_text(hand)
 
     log = []
-    ensure_yaml("hand.yaml", DEFAULT_BASE, log=log.append)
+    ensure_yaml("hand.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=log.append)
 
     assert log == ["Updated SDKs in hand.yaml: merged into try-omp (plugs)"]
     out = (in_tmp / "hand.yaml").read_text()
@@ -309,18 +315,58 @@ def test_ensure_yaml_merges_missing_plug_preserving_lines(in_tmp):
     assert entries == {"pi-auth-gateway"}
     # A re-run is now a silent no-op (nothing left to merge).
     log2 = []
-    ensure_yaml("hand.yaml", DEFAULT_BASE, log=log2.append)
+    ensure_yaml("hand.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=log2.append)
     assert log2 == []
 
 
 def test_ensure_yaml_fully_specified_file_untouched(in_tmp):
     # A fully-specified, hand-placed file (the template itself, written to disk
     # directly rather than via ensure_yaml) must be left byte-for-byte alone.
-    text = render_template(DEFAULT_BASE)
+    text = render_template(DEFAULT_BASE, REQUIRED_SDKS)
     (in_tmp / "full.yaml").write_text(text)
     before = (in_tmp / "full.yaml").read_bytes()
 
     log = []
-    ensure_yaml("full.yaml", DEFAULT_BASE, log=log.append)
+    ensure_yaml("full.yaml", DEFAULT_BASE, REQUIRED_SDKS, log=log.append)
     assert log == []
     assert (in_tmp / "full.yaml").read_bytes() == before
+
+
+def test_ensure_yaml_custom_sdks_merged(in_tmp):
+    # A custom SDK list: only two SDKs, one with a plug.
+    custom = [
+        {"name": "alpha"},
+        {"name": "beta", "plugs": {"my-plug": {"interface": "tunnel"}}},
+    ]
+    log = []
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, custom, log=log.append)
+
+    assert log == ["Created workshop.yaml"]
+    text = (in_tmp / "workshop.yaml").read_text()
+    names = [name for name, _, _ in iter_sdk_blocks(lines_of(text))]
+    assert names == ["alpha", "beta"]
+    assert "my-plug" in text
+
+
+def test_ensure_yaml_empty_sdks_creates_minimal_template(in_tmp):
+    log = []
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, [], log=log.append)
+
+    assert log == ["Created workshop.yaml"]
+    text = (in_tmp / "workshop.yaml").read_text()
+    assert "sdks:\n" in text
+    # No SDK items — just the header.
+    names = [name for name, _, _ in iter_sdk_blocks(lines_of(text))]
+    assert names == []
+
+
+def test_ensure_yaml_empty_sdks_noop_on_existing(in_tmp):
+    # Pre-populate with a fully specified file.
+    text = render_template(DEFAULT_BASE, REQUIRED_SDKS)
+    (in_tmp / "workshop.yaml").write_text(text)
+    before = (in_tmp / "workshop.yaml").read_bytes()
+
+    log = []
+    ensure_yaml("workshop.yaml", DEFAULT_BASE, [], log=log.append)
+    assert log == []
+    assert (in_tmp / "workshop.yaml").read_bytes() == before

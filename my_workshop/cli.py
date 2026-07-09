@@ -8,13 +8,16 @@ A normal run:
 
   1. Locates the workshop YAML (an explicit path, ./workshop.yaml, or a
      single file under .workshop/).
-  2. Creates it from a template if absent; otherwise merges any missing
-     required SDKs and their plugs/slots into the existing file.
-  3. Hides the file from git so it never appears in 'git status': a tracked
+  2. Loads external additions config (workshop.my.yaml or
+     ~/.config/my-workshop/my.yaml).  When no file is found the tool is a
+     noop: no SDKs added, no files copied, no connections made.
+  3. Creates the workshop YAML from a template if absent; otherwise merges
+     any missing SDKs and their plugs/slots into the existing file.
+  4. Hides the file from git so it never appears in 'git status': a tracked
      file gets the skip-worktree bit; an untracked file is added to
      .git/info/exclude. Either way the change is local to your work tree and
      is never committed or pushed.
- 4. Runs the launch/copy/connect sequence and prints how to connect.
+ 5. Runs the launch/copy/connect sequence and prints how to connect.
 
 Use --revert to stop ignoring the YAML: it clears skip-worktree and restores a
 tracked file, or drops the local exclude entry for an untracked one.
@@ -24,9 +27,10 @@ import argparse
 import os
 import sys
 
+from .additions import find_additions, load_additions
 from .workshop import Workshop, provision
 from .worktree import hide_in_worktree, revert
-from .yaml_config import DEFAULT_BASE, ensure_yaml, find_yaml
+from .yaml_config import ensure_yaml, find_yaml
 
 
 def build_parser(prog=None):
@@ -37,9 +41,10 @@ def build_parser(prog=None):
     )
     ap.add_argument(
         "--base",
-        default=DEFAULT_BASE,
+        default=None,
         metavar="IMAGE",
-        help=f"Base image for a new workshop.yaml (default: {DEFAULT_BASE})",
+        help="Base image for a new workshop.yaml "
+        "(default: additions config, or ubuntu@24.04)",
     )
     ap.add_argument(
         "--revert",
@@ -64,16 +69,27 @@ def main(argv=None, workshop=None):
     prog = prog or "my-workshop"
 
     path = find_yaml(args.yaml)
+    additions_path = find_additions(path)
 
     if args.revert:
         revert(path, prog)
+        if additions_path:
+            revert(additions_path, prog)
         return
 
-    ensure_yaml(path, args.base)
+    if additions_path:
+        print(f"Using additions config: {additions_path}")
+    else:
+        print("No additions config found; running as noop.")
+    additions = load_additions(path)
+    base = args.base or additions.get("base") or "ubuntu@24.04"
+    ensure_yaml(path, base, additions.get("sdks", []))
     hide_in_worktree(path, prog)
+    if additions_path:
+        hide_in_worktree(additions_path, prog)
 
     ws = workshop if workshop is not None else Workshop()
-    host = provision(ws, os.path.expanduser("~/.omp"))
+    host = provision(ws, additions.get("provision", {}))
     print(f"\nTo connect, use 'workshop shell' or 'ssh workshop@{host}'")
 
 

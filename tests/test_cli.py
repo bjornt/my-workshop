@@ -32,28 +32,28 @@ def test_build_parser_revert_is_a_store_true_flag():
 
 # --- main(): normal run -----------------------------------------------------
 
-def test_main_fresh_repo_creates_hides_provisions_and_prints_hostname(
-    git_repo, capsys
-):
+def test_main_no_additions_is_noop_on_provision(git_repo, capsys):
+    # Without an additions file the tool still creates and hides the YAML but
+    # performs no copies or connections.
     fake = FakeWorkshop(hostname="dev-box")
 
     main(["workshop.yaml"], workshop=fake)
 
-    # 1. The YAML is created on disk from the template.
+    # 1. The YAML is created on disk (minimal template, no SDKs).
     assert (git_repo / "workshop.yaml").exists()
 
-    # 2. Freshly created and untracked -> hidden via an anchored .git/info/exclude
-    #    entry so it drops off git's untracked list.
+    # 2. Hidden from git.
     assert "/workshop.yaml" in exclude_lines(git_repo)
 
-    # 3. The full launch lifecycle ran, in order, before the hostname query.
-    assert fake.ops[:4] == ["launch", "info", "copy_to", "connect"]
+    # 3. Provision runs launch/info/hostname but no copy or connect.
+    assert fake.ops[:2] == ["launch", "info"]
+    assert fake.copies == []
+    assert fake.connections == []
 
-    # 4. main threaded its own omp_home as source, resolved dest from info.
-    assert fake.copies == [(os.path.expanduser("~/.omp"), "/home/workshop/.omp")]
-
-    # 5. The connect hint prints the workshop's DNS hostname.
-    assert "ssh workshop@dev-box" in capsys.readouterr().out
+    # 4. The log reports no additions config and still prints the connect hint.
+    out = capsys.readouterr().out
+    assert "No additions config found" in out
+    assert "ssh workshop@" in out
 
 
 def test_main_falls_back_to_ip_when_no_hostname(git_repo, capsys):
@@ -84,6 +84,18 @@ def test_main_revert_does_not_provision(git_repo, capsys):
     # unhidden again.
     assert "/workshop.yaml" not in exclude_lines(git_repo)
 
+def test_main_revert_unhides_additions_file_too(git_repo, capsys):
+    # Set up additions file and run once to hide both.
+    (git_repo / "workshop.my.yaml").write_text("base: x\n")
+    main(["workshop.yaml"], workshop=FakeWorkshop(hostname="dev-box"))
+    assert "/workshop.my.yaml" in exclude_lines(git_repo)
+    capsys.readouterr()
+
+    main(["workshop.yaml", "--revert"], workshop=FakeWorkshop(hostname="dev-box"))
+
+    assert "/workshop.yaml" not in exclude_lines(git_repo)
+    assert "/workshop.my.yaml" not in exclude_lines(git_repo)
+
 
 # --- main(): explicit path --------------------------------------------------
 
@@ -94,3 +106,52 @@ def test_main_honours_explicit_path(git_repo):
 
     assert (git_repo / "custom.yaml").exists()
     assert not (git_repo / "workshop.yaml").exists()
+
+# --- main(): local additions file ------------------------------------------
+
+def test_main_with_local_additions_uses_custom_config(git_repo, capsys):
+    # A local workshop.my.yaml with custom SDKs, base, and provision entries.
+    additions = (
+        "base: alpine@3.20\n"
+        "sdks:\n"
+        "  - name: custom-sdk\n"
+        "    plugs:\n"
+        "      my-plug:\n"
+        "        interface: tunnel\n"
+        "        endpoint: localhost:9000\n"
+        "\n"
+        "provision:\n"
+        "  copy:\n"
+        "    - source: ~/mydata\n"
+        "      target: omp:omp-home\n"
+        "  connect:\n"
+        "    - plug: omp:pi-auth-gateway\n"
+        "      slot: system:pi-auth-gateway\n"
+    )
+    (git_repo / "workshop.my.yaml").write_text(additions)
+
+    fake = FakeWorkshop(hostname="dev-box")
+    main(["workshop.yaml"], workshop=fake)
+
+    out = capsys.readouterr().out
+    assert "Using additions config" in out
+    assert "workshop.my.yaml" in out
+
+    # 1. Both YAML files are hidden from git.
+    assert "/workshop.yaml" in exclude_lines(git_repo)
+    assert "/workshop.my.yaml" in exclude_lines(git_repo)
+
+    # 2. The workshop YAML was created with the custom SDKs.
+    text = (git_repo / "workshop.yaml").read_text()
+    assert "custom-sdk" in text
+
+    # 3. The custom base was used.
+    assert "base: alpine@3.20" in text
+    # 4. The custom copy source was used.
+    assert fake.copies == [
+        (os.path.expanduser("~/mydata"), "/home/workshop/.omp"),
+    ]
+    # 5. The connect call uses the detected workshop name prefix.
+    assert fake.connections == [
+        ("dev/omp:pi-auth-gateway", "dev/system:pi-auth-gateway"),
+    ]

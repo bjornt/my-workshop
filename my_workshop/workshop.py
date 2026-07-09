@@ -5,14 +5,8 @@ orchestration helpers (`provision`, `hostname`) take any object with the same
 interface, so tests can drive them with a fake that never spawns a process.
 """
 
+import os
 import subprocess
-
-# SDK/mount names that identify the omp-home path inside the container, and
-# the plug/slot wiring for the dev workshop.
-OMP_HOME_SDK = "omp"
-OMP_HOME_MOUNT = "omp-home"
-OMP_GATEWAY_PLUG = "dev/omp:pi-auth-gateway"
-SYSTEM_GATEWAY_SLOT = "dev/system:pi-auth-gateway"
 
 
 def parse_hostname(info_output):
@@ -27,6 +21,20 @@ def parse_hostname(info_output):
             continue
         key, sep, value = line.partition(":")
         if sep and key.strip() == "hostname" and value.strip():
+            return value.strip()
+    return None
+
+
+def parse_workshop_name(info_output):
+    """Extract the top-level 'name:' value from `workshop info` output.
+
+    Returns None when no top-level ``name:`` line is present.
+    """
+    for line in info_output.splitlines():
+        if line[:1].isspace():   # skip indented SDK detail lines
+            continue
+        key, sep, value = line.partition(":")
+        if sep and key.strip() == "name" and value.strip():
             return value.strip()
     return None
 
@@ -58,52 +66,42 @@ def parse_mount_target(info_output, sdk, mount):
 class Workshop:
     """Thin wrapper over the real `workshop` command-line tool."""
 
-    def __init__(self, log=print):
-        self._log = log
-
-    def _run(self, *args):
-        self._log(f"+ workshop {' '.join(args)}")
-        subprocess.run(["workshop", *args], check=True)
-
     def launch(self):
-        self._run("launch")
+        """Run ``workshop launch`` and wait for it to finish."""
+        subprocess.run(["workshop", "launch"], check=True)
 
     def copy_to(self, source, dest):
-        """Copy a host directory into the workshop via a tar pipe."""
-        self._log(f"+ tar -cf - -C {source} . | workshop exec -- tar -xf - -C {dest}")
-        tar_send = subprocess.Popen(
-            ["tar", "-cf", "-", "-C", source, "."],
-            stdout=subprocess.PIPE,
+        """Copy *source* into the workshop at *dest*."""
+        subprocess.run(
+            ["workshop", "copy", source, dest],
+            check=True,
         )
-        recv = subprocess.Popen(
-            ["workshop", "exec", "--", "tar", "-xf", "-", "-C", dest],
-            stdin=tar_send.stdout,
-        )
-        tar_send.stdout.close()
-        recv.wait()
-        tar_send.wait()
-        if tar_send.returncode != 0:
-            raise subprocess.CalledProcessError(tar_send.returncode, "tar")
-        if recv.returncode != 0:
-            raise subprocess.CalledProcessError(recv.returncode, "workshop exec")
 
     def connect(self, plug, slot):
-        self._run("connect", plug, slot)
+        """Connect a plug to a slot."""
+        subprocess.run(
+            ["workshop", "connect", plug, slot],
+            check=True,
+        )
 
     def info(self):
-        """Return the stdout of `workshop info`, or None if the command failed."""
+        """Return the output of ``workshop info``, or None on failure."""
         result = subprocess.run(
-            ["workshop", "info"], capture_output=True, text=True,
+            ["workshop", "info"],
+            capture_output=True,
+            text=True,
         )
         if result.returncode != 0:
             return None
         return result.stdout
 
     def exec(self, *cmd):
-        """Run a command inside the workshop and return its stdout."""
+        """Run a command inside the workshop; return its stdout."""
         result = subprocess.run(
-            ["workshop", "exec", "--", *cmd],
-            check=True, capture_output=True, text=True,
+            ["workshop", "exec", *cmd],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return result.stdout
 
@@ -124,14 +122,27 @@ def hostname(ws, info=None):
     return ws.exec("hostname", "-I").split()[0]
 
 
-def provision(ws, omp_home):
+def provision(ws, provision_spec):
     """Run the launch/copy/connect sequence.
+
+    *provision_spec* is the ``provision`` sub-dict from the additions config,
+    containing ``copy`` and ``connect`` lists.
 
     Returns the workshop's hostname once it is up.
     """
     ws.launch()
     info = ws.info()
-    dest = parse_mount_target(info, OMP_HOME_SDK, OMP_HOME_MOUNT)
-    ws.copy_to(omp_home, dest)
-    ws.connect(OMP_GATEWAY_PLUG, SYSTEM_GATEWAY_SLOT)
+    name = parse_workshop_name(info)
+
+    for entry in provision_spec.get("copy", []):
+        source = os.path.expanduser(entry["source"])
+        sdk, _, mount = entry["target"].partition(":")
+        dest = parse_mount_target(info, sdk, mount)
+        ws.copy_to(source, dest)
+
+    for entry in provision_spec.get("connect", []):
+        plug = f"{name}/{entry['plug']}"
+        slot = f"{name}/{entry['slot']}"
+        ws.connect(plug, slot)
+
     return hostname(ws, info)

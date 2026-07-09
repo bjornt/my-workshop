@@ -1,0 +1,30 @@
+# workshop.my.yaml — additions config for my-workshop
+#
+# Copy this file to workshop.my.yaml (next to your workshop.yaml) or to
+# ~/.config/my-workshop/my.yaml and customise it for your project.
+#
+# The local file wins over the global one; when neither exists, the tool is
+# a noop (no SDKs added, no files copied, no connections made).
+
+base: ubuntu@24.04
+
+sdks:
+  - name: try-zed-remote
+  - name: try-omp
+    plugs:
+      pi-auth-gateway:
+        interface: tunnel
+        endpoint: localhost:4000
+  - name: system
+    slots:
+      pi-auth-gateway:
+        interface: tunnel
+        endpoint: localhost:4000
+
+provision:
+  copy:
+    - source: ~/.omp
+      target: omp:omp-home
+  connect:
+    - plug: omp:pi-auth-gateway
+      slot: system:pi-auth-gateway

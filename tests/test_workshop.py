@@ -1,22 +1,29 @@
 """Tests for my_workshop.workshop orchestration, driven by FakeWorkshop.
 
-No real subprocess and no mocks: `provision`/`hostname` are exercised against
-the in-memory FakeWorkshop, and `parse_hostname` against literal `info` text.
+All tests use FakeWorkshop (injected, not mocked) to verify the launch flow
+without spawning real processes.
 """
+
+import os
 
 import pytest
 
 from my_workshop.workshop import (
-    OMP_GATEWAY_PLUG,
-    OMP_HOME_MOUNT,
-    OMP_HOME_SDK,
-    SYSTEM_GATEWAY_SLOT,
     hostname,
     parse_hostname,
     parse_mount_target,
+    parse_workshop_name,
     provision,
 )
 from tests.fakes import FakeWorkshop
+
+
+# A provision spec matching the built-in defaults (for tests that exercise the
+# full flow without caring about custom entries).
+DEFAULT_PROVISION = {
+    "copy": [{"source": "~/.omp", "target": "omp:omp-home"}],
+    "connect": [{"plug": "omp:pi-auth-gateway", "slot": "system:pi-auth-gateway"}],
+}
 
 
 # --- parse_hostname ---------------------------------------------------------
@@ -66,29 +73,57 @@ def test_parse_hostname(name, info_output, expected):
     assert parse_hostname(info_output) == expected
 
 
+# --- parse_workshop_name ----------------------------------------------------
+
+@pytest.mark.parametrize(
+    "name, info_output, expected",
+    [
+        (
+            "top_level_value",
+            "name: dev\nbase: ubuntu@24.04\nhostname: dev-box\n",
+            "dev",
+        ),
+        (
+            "absent",
+            "base: ubuntu@24.04\nhostname: dev-box\n",
+            None,
+        ),
+        (
+            "indented_name_ignored",
+            "name: dev\nsdks:\n  - name: try-omp\n",
+            "dev",
+        ),
+        (
+            "indented_sdk_named_name_not_matched",
+            "sdks:\n  - name: name\n",
+            None,
+        ),
+        (
+            "extra_whitespace",
+            "name:   my-workshop  \n",
+            "my-workshop",
+        ),
+    ],
+)
+def test_parse_workshop_name(name, info_output, expected):
+    assert parse_workshop_name(info_output) == expected
+
 
 # --- parse_mount_target ----------------------------------------------------
 
 REAL_INFO = """\
-name:      dev
-base:      ubuntu@24.04
-hostname:  dev.my-workshop.wp
-status:    ready
+name: dev
+base: ubuntu@24.04
+hostname: dev-box
 sdks:
   omp:
-    tracking:   ~/.local/share/workshop/try/omp
-    installed:  16.3.10  2026-07-06  (x8)
     mounts:
       omp-home:
-        host-source:      …/b0f98552/dev/mount/omp/omp-home
-        workshop-target:  /home/workshop/.omp
+        workshop-target: /home/workshop/.omp
   zed-remote:
-    tracking:   ~/.local/share/workshop/try/zed-remote
-    installed:  0.1  2026-06-20  (x2)
     mounts:
       zed-server:
-        host-source:      …/b0f98552/dev/mount/zed-remote/zed-server
-        workshop-target:  /home/workshop/.zed_server
+        workshop-target: /home/workshop/.zed_server
 """
 
 
@@ -112,27 +147,59 @@ def test_parse_mount_target_returns_none_for_missing_mount():
 def test_provision_runs_lifecycle_ops_in_order():
     fake = FakeWorkshop(hostname="dev-box")
 
-    provision(fake, "/home/dev/omp")
+    provision(fake, DEFAULT_PROVISION)
 
     assert fake.ops[:4] == ["launch", "info", "copy_to", "connect"]
 
 
-def test_provision_copies_omp_home_to_the_resolved_dest():
+def test_provision_copies_each_spec():
+    spec = {
+        "copy": [
+            {"source": "~/data", "target": "omp:omp-home"},
+            {"source": "~/extra", "target": "zed-remote:zed-server"},
+        ],
+        "connect": [],
+    }
     fake = FakeWorkshop(hostname="dev-box")
 
-    provision(fake, "/home/dev/omp")
+    provision(fake, spec)
 
-    assert fake.copies == [("/home/dev/omp", "/home/workshop/.omp")]
+    assert fake.copies == [
+        (os.path.expanduser("~/data"), "/home/workshop/.omp"),
+        (os.path.expanduser("~/extra"), "/home/workshop/.zed_server"),
+    ]
 
 
-def test_provision_connects_gateway_plug_to_system_slot():
+def test_provision_connects_each_spec_with_workshop_prefix():
+    spec = {
+        "copy": [],
+        "connect": [
+            {"plug": "omp:pi-auth-gateway", "slot": "system:pi-auth-gateway"},
+        ],
+    }
     fake = FakeWorkshop(hostname="dev-box")
 
-    provision(fake, "/home/dev/omp")
+    provision(fake, spec)
 
-    assert fake.connections == [(OMP_GATEWAY_PLUG, SYSTEM_GATEWAY_SLOT)]
+    assert fake.connections == [
+        ("dev/omp:pi-auth-gateway", "dev/system:pi-auth-gateway"),
+    ]
 
 
+def test_provision_autodetects_workshop_name():
+    spec = {
+        "copy": [],
+        "connect": [
+            {"plug": "omp:pi-auth-gateway", "slot": "system:pi-auth-gateway"},
+        ],
+    }
+    fake = FakeWorkshop(hostname="dev-box", name="myws")
+
+    provision(fake, spec)
+
+    assert fake.connections == [
+        ("myws/omp:pi-auth-gateway", "myws/system:pi-auth-gateway"),
+    ]
 
 
 # --- hostname resolution: DNS vs. IP fallback -------------------------------
@@ -140,7 +207,7 @@ def test_provision_connects_gateway_plug_to_system_slot():
 def test_provision_returns_dns_hostname_and_skips_exec():
     fake = FakeWorkshop(hostname="dev-box")
 
-    result = provision(fake, "/home/dev/omp")
+    result = provision(fake, DEFAULT_PROVISION)
 
     assert result == "dev-box"
     # A DNS name from `info` short-circuits the fallback: no `exec` at all.
@@ -167,7 +234,7 @@ def test_hostname_falls_back_to_first_ip(name, fake):
 def test_provision_falls_back_to_ip_when_no_dns_hostname():
     fake = FakeWorkshop(hostname=None)
 
-    result = provision(fake, "/home/dev/omp")
+    result = provision(fake, DEFAULT_PROVISION)
 
     assert result == "10.0.0.5"
     assert "exec" in fake.ops

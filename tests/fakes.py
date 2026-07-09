@@ -8,7 +8,7 @@ hostname -- so tests can drive `provision`/`hostname`/`main` without a backend.
 
 
 class FakeWorkshop:
-    def __init__(self, hostname=None, ip="10.0.0.5", info_ok=True):
+    def __init__(self, hostname=None, ip="10.0.0.5", info_ok=True, name="dev"):
         """Configure the simulated backend.
 
         hostname: the DNS name `workshop info` reports (None => no hostname
@@ -16,6 +16,7 @@ class FakeWorkshop:
         ip:       first address `hostname -I` returns inside the workshop.
         info_ok:  whether `workshop info` succeeds (False simulates a
                   non-zero exit / older base with no info).
+        name:     the workshop name `workshop info` reports.
         """
         self.calls = []          # ordered ("op", *args) log of every call
         self.copies = []         # (source, dest) pairs passed to copy_to
@@ -24,6 +25,7 @@ class FakeWorkshop:
         self._hostname = hostname
         self._ip = ip
         self._info_ok = info_ok
+        self._name = name
 
     def launch(self):
         self.calls.append(("launch",))
@@ -37,12 +39,11 @@ class FakeWorkshop:
         self.calls.append(("connect", plug, slot))
         self.connections.append((plug, slot))
 
-
     def info(self):
         self.calls.append(("info",))
         if not self._info_ok:
             return None
-        lines = ["name: dev", "base: ubuntu@24.04"]
+        lines = [f"name: {self._name}", "base: ubuntu@24.04"]
         if self._hostname:
             lines.append(f"hostname: {self._hostname}")
         lines.append("sdks:")
@@ -50,6 +51,10 @@ class FakeWorkshop:
         lines.append("    mounts:")
         lines.append("      omp-home:")
         lines.append("        workshop-target: /home/workshop/.omp")
+        lines.append("  zed-remote:")
+        lines.append("    mounts:")
+        lines.append("      zed-server:")
+        lines.append("        workshop-target: /home/workshop/.zed_server")
         return "\n".join(lines) + "\n"
 
     def exec(self, *cmd):
