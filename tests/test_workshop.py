@@ -9,9 +9,11 @@ import pytest
 from my_workshop.workshop import (
     OMP_GATEWAY_PLUG,
     OMP_HOME_MOUNT,
+    OMP_HOME_SDK,
     SYSTEM_GATEWAY_SLOT,
     hostname,
     parse_hostname,
+    parse_mount_target,
     provision,
 )
 from tests.fakes import FakeWorkshop
@@ -64,6 +66,47 @@ def test_parse_hostname(name, info_output, expected):
     assert parse_hostname(info_output) == expected
 
 
+
+# --- parse_mount_target ----------------------------------------------------
+
+REAL_INFO = """\
+name:      dev
+base:      ubuntu@24.04
+hostname:  dev.my-workshop.wp
+status:    ready
+sdks:
+  omp:
+    tracking:   ~/.local/share/workshop/try/omp
+    installed:  16.3.10  2026-07-06  (x8)
+    mounts:
+      omp-home:
+        host-source:      …/b0f98552/dev/mount/omp/omp-home
+        workshop-target:  /home/workshop/.omp
+  zed-remote:
+    tracking:   ~/.local/share/workshop/try/zed-remote
+    installed:  0.1  2026-06-20  (x2)
+    mounts:
+      zed-server:
+        host-source:      …/b0f98552/dev/mount/zed-remote/zed-server
+        workshop-target:  /home/workshop/.zed_server
+"""
+
+
+def test_parse_mount_target_extracts_workshop_target():
+    assert parse_mount_target(REAL_INFO, "omp", "omp-home") == "/home/workshop/.omp"
+
+
+def test_parse_mount_target_picks_correct_sdk_and_mount():
+    assert parse_mount_target(REAL_INFO, "zed-remote", "zed-server") == "/home/workshop/.zed_server"
+
+
+def test_parse_mount_target_returns_none_for_missing_sdk():
+    assert parse_mount_target(REAL_INFO, "nope", "omp-home") is None
+
+
+def test_parse_mount_target_returns_none_for_missing_mount():
+    assert parse_mount_target(REAL_INFO, "omp", "nope") is None
+
 # --- provision lifecycle ----------------------------------------------------
 
 def test_provision_runs_lifecycle_ops_in_order():
@@ -71,17 +114,15 @@ def test_provision_runs_lifecycle_ops_in_order():
 
     provision(fake, "/home/dev/omp")
 
-    # The five lifecycle ops fire in exactly this order (the trailing hostname
-    # query -- info / exec -- is appended afterwards and checked separately).
-    assert fake.ops[:5] == ["launch", "stop", "remount", "connect", "start"]
+    assert fake.ops[:4] == ["launch", "info", "copy_to", "connect"]
 
 
-def test_provision_remounts_omp_home_at_the_configured_mount():
+def test_provision_copies_omp_home_to_the_resolved_dest():
     fake = FakeWorkshop(hostname="dev-box")
 
     provision(fake, "/home/dev/omp")
 
-    assert fake.remounts == [(OMP_HOME_MOUNT, "/home/dev/omp")]
+    assert fake.copies == [("/home/dev/omp", "/home/workshop/.omp")]
 
 
 def test_provision_connects_gateway_plug_to_system_slot():
@@ -92,12 +133,6 @@ def test_provision_connects_gateway_plug_to_system_slot():
     assert fake.connections == [(OMP_GATEWAY_PLUG, SYSTEM_GATEWAY_SLOT)]
 
 
-def test_provision_sets_lifecycle_flags():
-    fake = FakeWorkshop(hostname="dev-box")
-
-    provision(fake, "/home/dev/omp")
-
-    assert (fake.launched, fake.stopped, fake.started) == (True, True, True)
 
 
 # --- hostname resolution: DNS vs. IP fallback -------------------------------

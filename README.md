@@ -21,8 +21,7 @@ A normal run:
    *untracked* file is added to `.git/info/exclude`. Either way the change is
    local to your work tree and is never committed or pushed. Outside a git
    repository this is a silent no-op.
-4. **Launches** — runs the `launch → stop → remount → connect → start` sequence
-   and prints how to connect.
+4. **Launches** — runs the `launch → copy → connect` sequence and prints how to connect.
 
 The required SDKs are declared in `my_workshop/yaml_config.py` (`REQUIRED_SDKS`):
 `try-zed-remote`, `try-omp` (with a `pi-auth-gateway` tunnel plug), and the

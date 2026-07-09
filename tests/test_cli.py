@@ -47,10 +47,10 @@ def test_main_fresh_repo_creates_hides_provisions_and_prints_hostname(
     assert "/workshop.yaml" in exclude_lines(git_repo)
 
     # 3. The full launch lifecycle ran, in order, before the hostname query.
-    assert fake.ops[:5] == ["launch", "stop", "remount", "connect", "start"]
+    assert fake.ops[:4] == ["launch", "info", "copy_to", "connect"]
 
-    # 4. main threaded its own omp_home through to the remount destination.
-    assert fake.remounts == [("dev/omp:omp-home", os.path.expanduser("~/.omp"))]
+    # 4. main threaded its own omp_home as source, resolved dest from info.
+    assert fake.copies == [(os.path.expanduser("~/.omp"), "/home/workshop/.omp")]
 
     # 5. The connect hint prints the workshop's DNS hostname.
     assert "ssh workshop@dev-box" in capsys.readouterr().out
@@ -75,7 +75,7 @@ def test_main_revert_does_not_provision(git_repo, capsys):
     fake = FakeWorkshop(hostname="dev-box")
     main(["workshop.yaml", "--revert"], workshop=fake)
 
-    # The injected backend is never touched: no launch/stop/.../hostname query.
+    # The injected backend is never touched: no launch/.../hostname query.
     assert fake.calls == []
     out = capsys.readouterr().out
     # ...and control returned before the connect hint is printed.

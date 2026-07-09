@@ -2,7 +2,7 @@
 
 Drop-in for `my_workshop.workshop.Workshop`: same methods, no subprocess. It
 models the observable behaviour the launch flow depends on -- lifecycle state,
-remounts, connections, and the `info`/`exec` queries used to discover a
+copies, connections, and the `info`/`exec` queries used to discover a
 hostname -- so tests can drive `provision`/`hostname`/`main` without a backend.
 """
 
@@ -18,11 +18,9 @@ class FakeWorkshop:
                   non-zero exit / older base with no info).
         """
         self.calls = []          # ordered ("op", *args) log of every call
-        self.remounts = []       # (source, dest) pairs passed to remount
+        self.copies = []         # (source, dest) pairs passed to copy_to
         self.connections = []    # (plug, slot) pairs passed to connect
         self.launched = False
-        self.stopped = False
-        self.started = False
         self._hostname = hostname
         self._ip = ip
         self._info_ok = info_ok
@@ -31,22 +29,14 @@ class FakeWorkshop:
         self.calls.append(("launch",))
         self.launched = True
 
-    def stop(self):
-        self.calls.append(("stop",))
-        self.stopped = True
-        self.started = False
-
-    def remount(self, source, dest):
-        self.calls.append(("remount", source, dest))
-        self.remounts.append((source, dest))
+    def copy_to(self, source, dest):
+        self.calls.append(("copy_to", source, dest))
+        self.copies.append((source, dest))
 
     def connect(self, plug, slot):
         self.calls.append(("connect", plug, slot))
         self.connections.append((plug, slot))
 
-    def start(self):
-        self.calls.append(("start",))
-        self.started = True
 
     def info(self):
         self.calls.append(("info",))
@@ -56,8 +46,10 @@ class FakeWorkshop:
         if self._hostname:
             lines.append(f"hostname: {self._hostname}")
         lines.append("sdks:")
-        lines.append("  - name: try-omp")
-        lines.append("    hostname: indented-detail-should-be-ignored")
+        lines.append("  omp:")
+        lines.append("    mounts:")
+        lines.append("      omp-home:")
+        lines.append("        workshop-target: /home/workshop/.omp")
         return "\n".join(lines) + "\n"
 
     def exec(self, *cmd):

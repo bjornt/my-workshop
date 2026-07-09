@@ -14,8 +14,7 @@ A normal run:
      file gets the skip-worktree bit; an untracked file is added to
      .git/info/exclude. Either way the change is local to your work tree and
      is never committed or pushed.
-  4. Runs the launch/stop/remount/connect/start sequence and prints how to
-     connect.
+ 4. Runs the launch/copy/connect sequence and prints how to connect.
 
 Use --revert to stop ignoring the YAML: it clears skip-worktree and restores a
 tracked file, or drops the local exclude entry for an untracked one.
