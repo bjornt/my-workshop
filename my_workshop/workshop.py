@@ -66,23 +66,39 @@ def parse_mount_target(info_output, sdk, mount):
 class Workshop:
     """Thin wrapper over the real `workshop` command-line tool."""
 
+    def __init__(self, log=print):
+        self._log = log
+
+    def _run(self, *args):
+        self._log(f"+ workshop {' '.join(args)}")
+        subprocess.run(["workshop", *args], check=True)
+
     def launch(self):
         """Run ``workshop launch`` and wait for it to finish."""
-        subprocess.run(["workshop", "launch"], check=True)
+        self._run("launch")
 
     def copy_to(self, source, dest):
-        """Copy *source* into the workshop at *dest*."""
-        subprocess.run(
-            ["workshop", "copy", source, dest],
-            check=True,
+        """Copy a host directory into the workshop via a tar pipe."""
+        self._log(f"+ tar -cf - -C {source} . | workshop exec -- tar -xf - -C {dest}")
+        tar_send = subprocess.Popen(
+            ["tar", "-cf", "-", "-C", source, "."],
+            stdout=subprocess.PIPE,
         )
+        recv = subprocess.Popen(
+            ["workshop", "exec", "--", "tar", "-xf", "-", "-C", dest],
+            stdin=tar_send.stdout,
+        )
+        tar_send.stdout.close()
+        recv.wait()
+        tar_send.wait()
+        if tar_send.returncode != 0:
+            raise subprocess.CalledProcessError(tar_send.returncode, "tar")
+        if recv.returncode != 0:
+            raise subprocess.CalledProcessError(recv.returncode, "workshop exec")
 
     def connect(self, plug, slot):
         """Connect a plug to a slot."""
-        subprocess.run(
-            ["workshop", "connect", plug, slot],
-            check=True,
-        )
+        self._run("connect", plug, slot)
 
     def info(self):
         """Return the output of ``workshop info``, or None on failure."""
