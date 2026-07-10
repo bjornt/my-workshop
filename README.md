@@ -52,7 +52,7 @@ shape (`base`, `sdks`, and a `provision` block of `copy`/`connect` entries).
 
 ## Requirements
 
-- Python >= 3.9
+- Python >= 3.14
 - The [`workshop`](https://workshop.dev) CLI on your `PATH` (needed only to
   actually launch an environment; not required to run the tests)
 - `git` (optional — used to hide the YAML; absent git degrades gracefully)
