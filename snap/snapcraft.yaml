@@ -13,6 +13,11 @@ description: |
   host's `workshop` and `git` commands (classic confinement is required so
   it can read and write project files and reach those tools on PATH).
 
+contact: https://github.com/bjornt/my-workshop/issues
+issues: https://github.com/bjornt/my-workshop/issues
+source-code: https://github.com/bjornt/my-workshop
+website: https://github.com/bjornt/my-workshop
+license: GPL-3.0-only
 grade: stable
 confinement: classic
 
