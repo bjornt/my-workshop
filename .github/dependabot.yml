@@ -9,11 +9,11 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "uv"
+  - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
     groups:
-      python:
+      go:
         patterns:
           - "*"

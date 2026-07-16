@@ -52,26 +52,34 @@ shape (`base`, `sdks`, and a `provision` block of `copy`/`connect` entries).
 
 ## Requirements
 
-- Python >= 3.14
+- [Go](https://go.dev/) >= 1.23 (to build; the resulting binary is a single
+  static executable with no runtime dependencies)
 - The [`workshop`](https://workshop.dev) CLI on your `PATH` (needed only to
   actually launch an environment; not required to run the tests)
 - `git` (optional — used to hide the YAML; absent git degrades gracefully)
-- [`uv`](https://docs.astral.sh/uv/) for development
 
+## Installing
 
-Run the entrypoint directly:
+Build a single self-contained binary and drop it anywhere on your `PATH`:
 
 ```console
-$ ./my-workshop                 # auto-detect the YAML and launch
-$ ./my-workshop path/to/dev.yaml  # use an explicit YAML path
-$ ./my-workshop --base ubuntu@24.04  # base image for a newly created YAML
-$ ./my-workshop --revert        # stop ignoring the YAML and exit (no launch)
+$ go build -o my-workshop ./cmd/my-workshop
+$ ./my-workshop --help
 ```
 
-Or, in a `uv`-managed checkout, via the installed console script:
+Or install straight into your Go bin directory:
 
 ```console
-$ uv run my-workshop --help
+$ go install github.com/bjornt/my-workshop@latest
+```
+
+## Usage
+
+```console
+$ my-workshop                    # auto-detect the YAML and launch
+$ my-workshop path/to/dev.yaml   # use an explicit YAML path
+$ my-workshop --base ubuntu@24.04  # base image for a newly created YAML
+$ my-workshop --revert           # stop ignoring the YAML and exit (no launch)
 ```
 
 ### Options
@@ -84,25 +92,27 @@ $ uv run my-workshop --help
 
 ## Development
 
-The project is set up with [`uv`](https://docs.astral.sh/uv/). Create the
-environment (installs the package plus the test dependencies) with:
+Build, format, vet, and test with the `Makefile` targets:
 
 ```console
-$ uv sync
+$ make build     # go build -o my-workshop ./cmd/my-workshop
+$ make test      # go test ./...
+$ make check     # gofmt -w . && go vet ./... && go test ./...
 ```
 
-The logic lives in the importable `my_workshop` package:
+The logic lives in unexported packages under `internal/`; `cmd/my-workshop/main.go` is a thin
+entrypoint shim that delegates to `internal/cli.Run`.
 
-| Module                      | Responsibility                                              |
-| --------------------------- | ----------------------------------------------------------- |
-| `my_workshop/additions.py`  | Load the external additions config (`workshop.my.yaml`).    |
-| `my_workshop/yaml_config.py`| Locate, create, and augment the workshop YAML.              |
-| `my_workshop/worktree.py`   | Hide/reveal the YAML from git (shells out to real `git`).   |
-| `my_workshop/workshop.py`   | `Workshop` CLI wrapper + `provision`/`hostname` flow.       |
-| `my_workshop/cli.py`        | Argument parsing and `main()`.                              |
+| Package                    | Responsibility                                              |
+| -------------------------- | ----------------------------------------------------------- |
+| `internal/additions`       | Load the external additions config (`workshop.my.yaml`).    |
+| `internal/yamlconfig`      | Locate, create, and augment the workshop YAML.              |
+| `internal/worktree`        | Hide/reveal the YAML from git (shells out to real `git`).   |
+| `internal/workshop`        | `Workshop` CLI wrapper + `Provision`/`Hostname` flow.       |
+| `internal/cli`             | Argument parsing and `Run()`.                               |
 
 ## Running the tests
 
 ```console
-$ uv run pytest
+$ go test ./...
 ```

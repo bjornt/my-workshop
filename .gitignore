@@ -1,10 +1,6 @@
-# Python
-__pycache__/
-*.py[cod]
+# Go build output
+/my-workshop
+/dist/
 
-# uv / virtualenv
-.venv/
-
-# pytest
-.pytest_cache/
+# Editor / OS
 *.snap
