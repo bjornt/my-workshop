@@ -293,6 +293,72 @@ func TestLoadAdditions_readsLocalFile(t *testing.T) {
 	}
 }
 
+func TestLoadAdditions_unreadableReturnsEmpty(t *testing.T) {
+	dir := gitenv.NewTmp(t)
+
+	localPath := filepath.Join(dir, "workshop.my.yaml")
+	if err := os.Mkdir(localPath, 0o755); err != nil {
+		t.Fatalf("mkdir local additions: %v", err)
+	}
+
+	workshopPath := filepath.Join(dir, "workshop.yaml")
+	cfg, ok := additions.LoadAdditions(workshopPath)
+	if ok {
+		t.Error("LoadAdditions ok = true, want false for unreadable path")
+	}
+	if cfg.Base != "" || len(cfg.SDKs) != 0 {
+		t.Errorf("LoadAdditions not empty: %+v", cfg)
+	}
+}
+
+func TestParseAdditions_blankBaseValueIsEmpty(t *testing.T) {
+	got := additions.ParseAdditions("base:   \n")
+	if got.Base != "" {
+		t.Errorf("base = %q, want empty", got.Base)
+	}
+}
+
+func TestParseAdditions_sdkSlotsStopAtPeerBlock(t *testing.T) {
+	const text = "sdks:\n" +
+		"  - name: my-sdk\n" +
+		"    plugs:\n" +
+		"      my-plug:\n" +
+		"        interface: tunnel\n" +
+		"    slots:\n" +
+		"      my-slot:\n" +
+		"        interface: tunnel\n"
+	got := additions.ParseAdditions(text)
+	if len(got.SDKs) != 1 {
+		t.Fatalf("len(sdks) = %d, want 1", len(got.SDKs))
+	}
+	if len(got.SDKs[0].Plugs) != 1 {
+		t.Errorf("plugs = %v, want 1", got.SDKs[0].Plugs)
+	}
+}
+
+func TestParseAdditions_subblockRangeSkipsBlankLines(t *testing.T) {
+	const text = "provision:\n" +
+		"  copy:\n" +
+		"\n" +
+		"    - source: ~/x\n" +
+		"      target: sdk:mount\n"
+	got := additions.ParseAdditions(text)
+	if len(got.Provision.Copy) != 1 {
+		t.Errorf("copy = %v, want 1 entry", got.Provision.Copy)
+	}
+}
+
+func TestParseAdditions_emptyCopySection(t *testing.T) {
+	const text = "provision:\n" +
+		"  copy:\n" +
+		"\n" +
+		"\n"
+	got := additions.ParseAdditions(text)
+	if len(got.Provision.Copy) != 0 {
+		t.Errorf("copy = %v, want empty", got.Provision.Copy)
+	}
+}
+
 // entryAttrs returns the attrs of the named entry, failing the test if absent.
 func entryAttrs(t *testing.T, entries yamlconfig.Entries, name string) yamlconfig.Attrs {
 	t.Helper()

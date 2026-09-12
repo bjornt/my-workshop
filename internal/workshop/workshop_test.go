@@ -1,7 +1,11 @@
 package workshop_test
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bjornt/my-workshop/internal/testsupport/fakeworkshop"
@@ -333,5 +337,248 @@ func TestProvisionFallsBackToIPWhenNoDNSHostname(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected exec in ops, got %v", fake.Ops())
+	}
+}
+
+func TestDefaultLogger(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+
+	workshop.DefaultLogger("hello workshop")
+	w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "hello workshop\n" {
+		t.Errorf("DefaultLogger output = %q, want %q", got, "hello workshop\n")
+	}
+}
+
+func installFakeWorkshop(t *testing.T, body string) {
+	t.Helper()
+	bindir := t.TempDir()
+	path := filepath.Join(bindir, "workshop")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatalf("write fake workshop: %v", err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestNewRealWorkshop_NilLoggerDefaultsToDefaultLogger(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+
+	installFakeWorkshop(t, "case \"$1\" in\n  launch) exit 0 ;;\nesac\nexit 1")
+
+	real := workshop.NewRealWorkshop(nil)
+	if err := real.Launch(); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "+ workshop launch\n" {
+		t.Errorf("output = %q, want %q", got, "+ workshop launch\n")
+	}
+}
+
+func TestRealWorkshop_Launch(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  launch) exit 0 ;;\nesac\nexit 1")
+
+	var logs []string
+	real := workshop.NewRealWorkshop(func(s string) { logs = append(logs, s) })
+	if err := real.Launch(); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if len(logs) != 1 || logs[0] != "+ workshop launch" {
+		t.Errorf("logs = %v, want [+ workshop launch]", logs)
+	}
+}
+
+func TestRealWorkshop_LaunchError(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  launch) exit 1 ;;\nesac\nexit 0")
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	if err := real.Launch(); err == nil {
+		t.Fatal("expected Launch error")
+	}
+}
+
+func TestRealWorkshop_Connect(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  connect) exit 0 ;;\nesac\nexit 1")
+
+	var logs []string
+	real := workshop.NewRealWorkshop(func(s string) { logs = append(logs, s) })
+	if err := real.Connect("plug1", "slot1"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	want := "+ workshop connect plug1 slot1"
+	if len(logs) != 1 || logs[0] != want {
+		t.Errorf("logs = %v, want [%s]", logs, want)
+	}
+}
+
+func TestRealWorkshop_Info(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  info) printf 'name: dev\\nhostname: fake-box\\n'; exit 0 ;;\nesac\nexit 1")
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	out, ok := real.Info()
+	if !ok {
+		t.Fatal("Info returned ok=false")
+	}
+	if !strings.Contains(out, "hostname: fake-box") {
+		t.Errorf("Info output = %q", out)
+	}
+}
+
+func TestRealWorkshop_InfoError(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  info) exit 1 ;;\nesac\nexit 0")
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	out, ok := real.Info()
+	if ok {
+		t.Fatal("expected ok=false")
+	}
+	if out != "" {
+		t.Errorf("output = %q, want empty", out)
+	}
+}
+
+func TestRealWorkshop_Exec(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  exec) shift; exec \"$@\" ;;\nesac\nexit 1")
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	out, err := real.Exec("echo", "workshop-output")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if strings.TrimSpace(out) != "workshop-output" {
+		t.Errorf("Exec output = %q", out)
+	}
+}
+
+func TestRealWorkshop_ExecError(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  exec) exit 42 ;;\nesac\nexit 1")
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	_, err := real.Exec("anything")
+	if err == nil {
+		t.Fatal("expected Exec error")
+	}
+}
+
+func TestRealWorkshop_CopyTo(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  exec) shift; if [ \"$1\" = \"--\" ]; then shift; fi; exec \"$@\" ;;\nesac\nexit 1")
+
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "hello.txt"), []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dst := t.TempDir()
+
+	var logs []string
+	real := workshop.NewRealWorkshop(func(s string) { logs = append(logs, s) })
+	if err := real.CopyTo(src, dst); err != nil {
+		t.Fatalf("CopyTo: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dst, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read copied file: %v", err)
+	}
+	if string(data) != "world" {
+		t.Errorf("copied content = %q, want %q", data, "world")
+	}
+	if len(logs) != 1 || !strings.HasPrefix(logs[0], "+ tar") {
+		t.Errorf("logs = %v, want tar command log", logs)
+	}
+}
+
+func TestRealWorkshop_CopyToTarFails(t *testing.T) {
+	installFakeWorkshop(t, "case \"$1\" in\n  exec) shift; if [ \"$1\" = \"--\" ]; then shift; fi; exec \"$@\" ;;\nesac\nexit 1")
+
+	src := filepath.Join(t.TempDir(), "does-not-exist")
+	dst := t.TempDir()
+
+	real := workshop.NewRealWorkshop(func(string) {})
+	if err := real.CopyTo(src, dst); err == nil {
+		t.Fatal("expected CopyTo error for missing source")
+	}
+}
+
+// Stub Workshop implementations for exercising error paths.
+
+type errLaunchWorkshop struct{ fakeworkshop.FakeWorkshop }
+
+func (e *errLaunchWorkshop) Launch() error { return os.ErrInvalid }
+
+func TestProvisionReturnsLaunchError(t *testing.T) {
+	_, err := workshop.Provision(&errLaunchWorkshop{}, defaultProvision)
+	if err == nil {
+		t.Fatal("expected error from Launch")
+	}
+}
+
+type errCopyWorkshop struct{ fakeworkshop.FakeWorkshop }
+
+func (e *errCopyWorkshop) Launch() error               { return nil }
+func (e *errCopyWorkshop) Info() (string, bool)        { return fakeworkshop.New().Info() }
+func (e *errCopyWorkshop) CopyTo(string, string) error { return os.ErrInvalid }
+
+func TestProvisionReturnsCopyError(t *testing.T) {
+	_, err := workshop.Provision(&errCopyWorkshop{}, defaultProvision)
+	if err == nil {
+		t.Fatal("expected error from CopyTo")
+	}
+}
+
+type errConnectWorkshop struct{ fakeworkshop.FakeWorkshop }
+
+func (e *errConnectWorkshop) Launch() error                { return nil }
+func (e *errConnectWorkshop) Info() (string, bool)         { return fakeworkshop.New().Info() }
+func (e *errConnectWorkshop) CopyTo(string, string) error  { return nil }
+func (e *errConnectWorkshop) Connect(string, string) error { return os.ErrInvalid }
+
+func TestProvisionReturnsConnectError(t *testing.T) {
+	_, err := workshop.Provision(&errConnectWorkshop{}, defaultProvision)
+	if err == nil {
+		t.Fatal("expected error from Connect")
+	}
+}
+
+type errExecWorkshop struct{ fakeworkshop.FakeWorkshop }
+
+func (e *errExecWorkshop) Info() (string, bool)           { return "", false }
+func (e *errExecWorkshop) Exec(...string) (string, error) { return "", os.ErrInvalid }
+
+func TestHostnameReturnsEmptyWhenExecFails(t *testing.T) {
+	if got := workshop.Hostname(&errExecWorkshop{}); got != "" {
+		t.Errorf("Hostname = %q, want empty", got)
+	}
+}
+
+type emptyExecWorkshop struct{ fakeworkshop.FakeWorkshop }
+
+func (e *emptyExecWorkshop) Info() (string, bool)           { return "", false }
+func (e *emptyExecWorkshop) Exec(...string) (string, error) { return "   ", nil }
+
+func TestHostnameReturnsEmptyWhenNoIPFields(t *testing.T) {
+	if got := workshop.Hostname(&emptyExecWorkshop{}); got != "" {
+		t.Errorf("Hostname = %q, want empty", got)
 	}
 }

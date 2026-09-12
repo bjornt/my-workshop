@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -252,5 +254,87 @@ func TestMainWithLocalAdditionsUsesCustomConfig(t *testing.T) {
 	wantConnections := [][2]string{{"dev/omp:pi-auth-gateway", "dev/system:pi-auth-gateway"}}
 	if !reflect.DeepEqual(fake.Connections, wantConnections) {
 		t.Errorf("Connections = %v, want %v", fake.Connections, wantConnections)
+	}
+}
+
+func TestParseArgsHelp(t *testing.T) {
+	_, err := ParseArgs([]string{"--help"})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("expected flag.ErrHelp, got %v", err)
+	}
+}
+
+func TestParseArgsUnknownFlag(t *testing.T) {
+	_, err := ParseArgs([]string{"--unknown-flag"})
+	if err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Errorf("error should contain usage, got: %s", err.Error())
+	}
+}
+
+func TestParseArgsBaseAfterPositional(t *testing.T) {
+	args, err := ParseArgs([]string{"target.yaml", "--base", "custom:img"})
+	if err != nil {
+		t.Fatalf("ParseArgs: %v", err)
+	}
+	if args.Base != "custom:img" {
+		t.Errorf("Base = %q, want custom:img", args.Base)
+	}
+	if args.YAML != "target.yaml" {
+		t.Errorf("YAML = %q, want target.yaml", args.YAML)
+	}
+}
+
+func TestRunFindYAMLMultipleCandidates(t *testing.T) {
+	gitenv.NewTmp(t)
+	if err := os.MkdirAll(".workshop", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".workshop", "one.yaml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".workshop", "two.yml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	log, _ := logger()
+	err := Run([]string{}, fakeworkshop.New(), log)
+	if err == nil {
+		t.Fatal("expected error for multiple .workshop candidates")
+	}
+}
+
+func TestRunEnsureYAMLError(t *testing.T) {
+	gitenv.NewTmp(t)
+	if err := os.Mkdir("workshop.yaml", 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	log, _ := logger()
+	err := Run([]string{}, fakeworkshop.New(), log)
+	if err == nil {
+		t.Fatal("expected error when workshop.yaml is a directory")
+	}
+}
+
+func TestRunNilBackendUsesRealWorkshopAndReturnsError(t *testing.T) {
+	gitenv.NewTmp(t)
+	t.Setenv("PATH", "")
+
+	log, _ := logger()
+	err := Run([]string{"workshop.yaml"}, nil, log)
+	if err == nil {
+		t.Fatal("expected error when real workshop binary is unavailable")
+	}
+}
+
+func TestRunReturnsParseArgsError(t *testing.T) {
+	gitenv.NewTmp(t)
+	log, _ := logger()
+	err := Run([]string{"--not-a-flag"}, fakeworkshop.New(), log)
+	if err == nil {
+		t.Fatal("expected error from invalid flag")
 	}
 }

@@ -612,3 +612,159 @@ func TestEnsureYAML_EmptySDKsNoopOnExisting(t *testing.T) {
 		t.Fatal("file changed with empty SDK list")
 	}
 }
+
+func TestNames(t *testing.T) {
+	entries := Entries{
+		{Name: "alpha"},
+		{Name: "beta"},
+		{Name: "alpha"},
+	}
+	got := entries.Names()
+	if !got["alpha"] || !got["beta"] {
+		t.Fatalf("Names() = %v, want alpha and beta", got)
+	}
+	if len(got) != 2 {
+		t.Errorf("Names() length = %d, want 2", len(got))
+	}
+}
+
+func TestFindSubblock_SkipsBlankLinesAndStopsAtPeerBlock(t *testing.T) {
+	text := ("sdks:\n" +
+		"  - name: sdk\n" +
+		"    plugs:\n" +
+		"\n" +
+		"      first:\n" +
+		"        interface: tunnel\n" +
+		"    slots:\n" +
+		"      second:\n" +
+		"        interface: tunnel\n")
+	lines := linesOf(text)
+	start, end, _ := SDKBounds(lines, "sdk")
+
+	header, entries := FindSubblock(lines, start, end, "plugs")
+	if header == -1 {
+		t.Fatal("plugs header not found")
+	}
+	want := map[string]bool{"first": true}
+	if !setsEqual(entries, want) {
+		t.Errorf("plugs entries = %v, want %v", entries, want)
+	}
+}
+
+func TestAddMissing_MergesSlotIntoExistingSubblock(t *testing.T) {
+	text := ("name: dev\n" +
+		"base: ubuntu@24.04\n" +
+		"sdks:\n" +
+		"  - name: try-omp\n" +
+		"    slots:\n" +
+		"      existing-slot:\n" +
+		"        interface: tunnel\n")
+	lines := linesOf(text)
+	wanted := Entries{{Name: "new-slot", Attrs: Attrs{{Key: "interface", Value: "tunnel"}}}}
+	if !AddMissing(&lines, "try-omp", "slots", wanted) {
+		t.Fatal("expected lines to be modified")
+	}
+
+	joined := strings.Join(lines, "")
+	if !strings.Contains(joined, "      new-slot:\n") {
+		t.Fatalf("new-slot missing in:\n%s", joined)
+	}
+}
+
+func TestEnsureYAML_AddsMissingSDKToExistingFile(t *testing.T) {
+	tmp := chdirTmp(t)
+	if err := os.WriteFile(filepath.Join(tmp, "workshop.yaml"), []byte(bareSDKs), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var log []string
+	capture := func(s string) { log = append(log, s) }
+	spec := []SDKSpec{{Name: "new-sdk"}}
+	if err := EnsureYAML("workshop.yaml", defaultBase, spec, capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 1 || !strings.Contains(log[0], "added new-sdk") {
+		t.Fatalf("log = %v, want added new-sdk", log)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmp, "workshop.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "  - name: new-sdk\n") {
+		t.Fatalf("new-sdk missing in:\n%s", data)
+	}
+}
+
+func TestEnsureYAML_ReadFileError(t *testing.T) {
+	tmp := chdirTmp(t)
+	if err := os.Mkdir(filepath.Join(tmp, "workshop.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureYAML("workshop.yaml", defaultBase, requiredSDKs, func(string) {}); err == nil {
+		t.Fatal("expected error reading a directory")
+	}
+}
+
+func TestEnsureYAML_CreateWriteError(t *testing.T) {
+	tmp := chdirTmp(t)
+	path := filepath.Join(tmp, "missing", "workshop.yaml")
+
+	if err := EnsureYAML(path, defaultBase, requiredSDKs, func(string) {}); err == nil {
+		t.Fatal("expected error when parent directory does not exist")
+	}
+}
+
+func TestEnsureYAML_MergesBothPlugsAndSlots(t *testing.T) {
+	tmp := chdirTmp(t)
+	hand := ("name: dev\n" +
+		"base: ubuntu@24.04\n" +
+		"sdks:\n" +
+		"  - name: try-omp\n" +
+		"    plugs:\n" +
+		"      existing-plug:\n" +
+		"        interface: tunnel\n" +
+		"    slots:\n" +
+		"      existing-slot:\n" +
+		"        interface: tunnel\n")
+	if err := os.WriteFile(filepath.Join(tmp, "hand.yaml"), []byte(hand), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := []SDKSpec{{
+		Name:  "try-omp",
+		Plugs: Entries{{Name: "new-plug", Attrs: Attrs{{Key: "interface", Value: "tunnel"}}}},
+		Slots: Entries{{Name: "new-slot", Attrs: Attrs{{Key: "interface", Value: "tunnel"}}}},
+	}}
+	var log []string
+	capture := func(s string) { log = append(log, s) }
+	if err := EnsureYAML("hand.yaml", defaultBase, spec, capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 1 || !strings.Contains(log[0], "plugs+slots") {
+		t.Fatalf("log = %v, want plugs+slots", log)
+	}
+}
+
+func TestSplitKeepEnds_KeepsTrailingTextWithoutNewline(t *testing.T) {
+	got := splitKeepEnds("a\nb")
+	want := []string{"a\n", "b"}
+	if !slicesEqual(got, want) {
+		t.Errorf("splitKeepEnds = %v, want %v", got, want)
+	}
+}
+
+func TestEnsureNewline(t *testing.T) {
+	lines := []string{"no newline", "has newline\n"}
+	ensureNewline(&lines, 0)
+	ensureNewline(&lines, 1)
+	ensureNewline(&lines, -1)
+	ensureNewline(&lines, 99)
+	if lines[0] != "no newline\n" {
+		t.Errorf("line 0 = %q, want newline appended", lines[0])
+	}
+	if lines[1] != "has newline\n" {
+		t.Errorf("line 1 changed to %q", lines[1])
+	}
+}

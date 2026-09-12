@@ -244,4 +244,43 @@ func TestWorktree(t *testing.T) {
 			t.Fatalf("file should still exist: %v", err)
 		}
 	})
+
+	t.Run("outside repo helpers degrade without git", func(t *testing.T) {
+		_ = gitenv.NewTmp(t)
+		if worktree.ExcludeAdd("x.yaml") {
+			t.Fatal("ExcludeAdd should be false outside repo")
+		}
+		if worktree.ExcludeRemove("x.yaml") {
+			t.Fatal("ExcludeRemove should be false outside repo")
+		}
+		if worktree.GitTracked("x.yaml") {
+			t.Fatal("GitTracked should be false outside repo")
+		}
+		if worktree.SkipWorktreeSet("x.yaml") {
+			t.Fatal("SkipWorktreeSet should be false outside repo")
+		}
+	})
+
+	t.Run("missing git binary degrades gracefully", func(t *testing.T) {
+		_ = gitenv.NewTmp(t)
+		t.Setenv("PATH", "")
+
+		if worktree.InGitRepo() {
+			t.Fatal("InGitRepo should be false when git is missing")
+		}
+		if worktree.ExcludeAdd("x.yaml") {
+			t.Fatal("ExcludeAdd should be false when git is missing")
+		}
+	})
+
+	t.Run("exclude remove reports false when exclude file missing", func(t *testing.T) {
+		repo := gitenv.NewRepo(t)
+		path := filepath.Join(repo, ".git", "info", "exclude")
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove exclude: %v", err)
+		}
+		if worktree.ExcludeRemove("x.yaml") {
+			t.Fatal("ExcludeRemove should be false when exclude file missing")
+		}
+	})
 }

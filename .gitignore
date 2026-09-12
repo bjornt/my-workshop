@@ -4,3 +4,4 @@
 
 # Editor / OS
 *.snap
+.workshop.lock
