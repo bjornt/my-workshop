@@ -3,8 +3,9 @@
 # Copy this file to workshop.my.yaml (next to your workshop.yaml) or to
 # ~/.config/my-workshop/my.yaml and customise it for your project.
 #
-# The local file wins over the global one; when neither exists, the tool is
-# a noop (no SDKs added, no files copied, no connections made).
+# The local file wins over the global one. Without either, my-workshop still
+# prepares the workshop YAML, attempts Git hiding, and launches Workshop,
+# but adds no SDKs, copies no files, and makes no connections.
 
 base: ubuntu@24.04
 
